@@ -13,7 +13,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-var basic = null, digest = null, thru = null, noop = null, winston = null, jsdom = null;
+var basic = null, digest = null, thru = null, noop = null, winston = null;//, jsdom = null;
 var logger = null;
   if (typeof String.prototype.endsWith !== 'function') {
     String.prototype.endsWith = function(suffix) {
@@ -41,7 +41,7 @@ if (typeof(window) === 'undefined') {
   thru = require("./lib/passthrough-wrapper");
   noop = require("./lib/noop");
   winston = require('winston');
-  jsdom = require('jsdom');
+  //jsdom = require('jsdom');
 
   logger = new (winston.Logger)({
     transports: [
@@ -240,9 +240,19 @@ stringhelper.camelcase = function(value,mode) {
  */
 function textToXML(text){
   var doc = null;
+  if (undefined == text) {
+    text = "";
+  }
   if (typeof window === "undefined") {
     // return plain text in nodejs
-    doc = jsdom.jsdom(text, null, { FetchExternalResources: false, ProcessExternalResources: false });
+    //var jsdom = require("jsdom");
+    //doc = jsdom.jsdom(text, null, { FetchExternalResources: false, ProcessExternalResources: false });
+    //var parser = new (require('xmlshim').DOMParser)(); // xmlshim >
+    //var parser = require("libxml");
+    var parser = new (require('xmldom').DOMParser)();
+    doc = parser.parseFromString(text, "text/xml");
+    //console.log("TEXT: " + text);
+    //console.log("DOC: " + doc)
   } else {
 	  if (window.ActiveXObject){
       doc=new ActiveXObject('Microsoft.XMLDOM');
@@ -718,6 +728,7 @@ mljs.prototype.configure = function(dboptions) {
     // configure appropriate browser wrapper
     this.__doreq_impl = this.__doreq_wrap;
   } else {
+    this.logger.debug("We need the Node.js wrapper");
     // in NodeJS
 
     // TODO support curl like 'anyauth' option to determine auth mechanism automatically (via HTTP 401 Authenticate)
@@ -797,6 +808,7 @@ m.__dogenid = function() {
  * @private
  */
 mljs.prototype.__doreq_wrap = function(reqname,options,content,callback_opt) {
+  //this.logger.debug("__doreq_wrap");
   this.dboptions.wrapper.request(reqname,options,content,function(result) {
     (callback_opt || noop)(result);
   });
@@ -807,6 +819,7 @@ mljs.prototype.__doreq_wrap = function(reqname,options,content,callback_opt) {
  * @private
  */
 mljs.prototype.__doreq_node = function(reqname,options,content,callback_opt) {
+  //this.logger.debug("__doreq_node");
   var self = this;
 
   var wrapper = this.dboptions.wrapper;
@@ -856,14 +869,28 @@ mljs.prototype.__doreq_node = function(reqname,options,content,callback_opt) {
     var complete = function() {
       if (!completeRan) {
         completeRan = true; // idiot check - complete can be called from many places and events
-        //self.logger.debug(reqname + " complete()");
-        if (res.statusCode.toString().substring(0,1) == ("4")) {
-          self.logger.error(reqname + " error: " + body);
+        self.logger.debug(reqname + " complete()");
+        var codeSub = res.statusCode.toString().substring(0,1);
+        self.logger.debug("statuscode: " + res.statusCode + ", codesub: " + codeSub);
+/*
+        for (var p in res) {
+          var pv = res[p];
+          if (typeof(pv) != "object" && typeof(pv) != "function" && !Array.isArray(pv)) {
+            self.logger.debug(p + " = " + pv);
+          }
+        }*/
+        self.logger.debug("RESPONSE BODY: " + body);
+        if (codeSub == ("4") || codeSub == ("5")) {
+          self.logger.debug(reqname + " error: " + body);
           var details = body;
           if ("string" == typeof body) {
-            details = textToXML(body);
+            if (body.substring(0,1) == "{") {
+              details = JSON.parse(body);
+            } else {
+              details = textToXML(body);
+            }
           }
-          if (undefined != details.nodeType) {
+          if (undefined != details && undefined != details.nodeType) {
             details = xmlToJson(details);
           }
           (callback_opt || noop)({statusCode: res.statusCode,error: body,inError: true, details: details});
@@ -894,22 +921,22 @@ mljs.prototype.__doreq_node = function(reqname,options,content,callback_opt) {
       }
     };
     res.on('end', function() {
-      //self.logger.debug(reqname + " End. Body: " + body);
+      self.logger.debug(reqname + " End. Body: " + body);
       complete();
     });
     res.on('close',function() {
-      //self.logger.debug(reqname + " Close");
+      self.logger.debug(reqname + " Close");
       complete();
     });
     res.on("error", function() {
-      //self.logger.debug(reqname + " ERROR: " + res.statusCode);
-      completeRan = true;
-      (callback_opt || noop)({statusCode: res.statusCode,error: body,inError: true});
+      self.logger.debug(reqname + " ERROR: " + res.statusCode);
+      //completeRan = true;
+      //(callback_opt || noop)({statusCode: res.statusCode,error: body,inError: true});
     });
 
     //self.logger.debug("Method: " + options.method);
     if (options.method == "PUT" || options.method == "DELETE") {
-      complete();
+      //complete();
     }
     //self.logger.debug(reqname + " End Response (sync)");
     //self.logger.debug("---- END " + reqname);
@@ -921,7 +948,9 @@ mljs.prototype.__doreq_node = function(reqname,options,content,callback_opt) {
     (callback_opt || noop)({inError: true,error: e}); // SHOULD THIS BE DETAIL INSTEAD OF ERROR?
   });
   if (undefined != content && null != content) {
-    if ("string" == typeof (content)) {
+    //console.log("request content is of type: " + typeof(content));
+    //console.log("is Buffer?: " + Buffer.isBuffer(content));
+    if ("string" == typeof (content) || Buffer.isBuffer(content)) { // Node.js fix for buffers accidentally being converted to JSON
       httpreq.write(content);
     } else if ("object" == typeof(content)) {
       if (undefined != content.nodeType) {
@@ -1320,6 +1349,16 @@ mljs.prototype.save = function(jsonXmlBinary,docuri_opt,props_opt,callback_opt) 
   if (undefined == docuri_opt) {
     // generate docuri and set on response object
     docuri_opt = this.__genid();
+  } else {
+    /*
+    if (undefined == window || undefined == window.encodeURI) {
+      // not in browser, in node.js?
+      if (undefined != encode) {
+        docuri_opt = escape(docuri_opt);
+      }
+    } else {
+      docuri_opt = encodeURI(docuri_opt);
+    }*/
   }
 
   var format = "json";
@@ -1868,6 +1907,9 @@ mljs.prototype.search = function(query_opt,options_opt,start_opt,sprops_opt,call
         options: optionsdoc.options,
         qtext: query_opt
       }};
+      if (null == query.search.qtext) {
+        query.search.qtext = "";
+      }
 
       var options = {
         path: url,
@@ -2112,7 +2154,7 @@ mljs.prototype.combined = function(structuredQuery_opt,textQuery_opt,optionsdoc,
   // V7, and we have local options
   var query = {"search":{
     "query": q.query,
-    "qtext": textQuery_opt,
+    "qtext": textQuery_opt || "",
     "options": optionsdoc.options}
   };
   var url = "/v1/search";
@@ -2143,6 +2185,7 @@ mljs.prototype.v7check = function(v6func,v7func) {
   // check version number first
   var self = this;
   var doit = function() {
+    console.log("v7check: VERSION: " + self._version);
     if (null == self._version || false === self._version || self._version.substring(0,self._version.indexOf(".")) < 7) {
       v6func();
     } else {
@@ -6639,17 +6682,19 @@ mljs.prototype.searchcontext.prototype.getOptions = function() {
   var opts = this._options;
   opts._findConstraint = function(cname) {
 
-  var con = null;
+    var con = null;
 
-  for (var i = 0, max = opts.options.constraint.length, c;i < max;i++) {
-    c = opts.options.constraint[i];
+    if (undefined != opts.options.constraint) {
+      for (var i = 0, max = opts.options.constraint.length, c;i < max;i++) {
+        c = opts.options.constraint[i];
 
-    if (c.name == cname) {
-      return c;
+        if (c.name == cname) {
+          return c;
+        }
+      }
     }
-  }
 
-  return null;
+    return null;
   };
   return opts;
 };
@@ -9289,7 +9334,9 @@ mljs.prototype.semanticcontext.prototype.getFact = function(subjectIri,predicate
 mljs.prototype.semanticcontext.prototype.getFacts = function(subjectIri,reload_opt) {
   //var facts = this._subjectFacts[subjectIri];
   var facts = this.getCachedFacts(subjectIri); //.facts;
-  if ((true==reload_opt) || undefined == facts) {
+  if ((true==reload_opt) || undefined == facts ||
+    (undefined == facts.namePredicate || undefined == facts.typeNameString || undefined == facts.nameString)
+  ) {
     var sparql = "SELECT * WHERE {";
 
     // check for bnodes
